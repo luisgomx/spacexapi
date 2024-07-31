@@ -89,6 +89,7 @@ const ranks = [
 // POST route to add a new user
 server.post(`/api/users`, async (req, res) => {
   const { name, password } = req.body;
+  const ip = req.ip;
   if (!name || !password) {
     return res.status(400).json({ error: "Name and password are required" });
   }
@@ -115,6 +116,7 @@ server.post(`/api/users`, async (req, res) => {
     const result = await collection.insertOne({
       name,
       password: hashedPassword,
+      ip, // Store the IP address
     });
     const insertedUser = await collection.findOne({ _id: result.insertedId });
 
