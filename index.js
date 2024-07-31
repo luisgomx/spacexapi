@@ -440,8 +440,6 @@ server.get(`/api/workers/timing`, async (req, res) => {
   }
 });
 
-// POST route to validate workers' payment eligibility
-
 // GET route to validate workers' payment eligibility
 server.get(`/api/validate-payments`, async (req, res) => {
   try {
@@ -459,26 +457,35 @@ server.get(`/api/validate-payments`, async (req, res) => {
     const workersToPay = [];
 
     for (const worker of workers) {
-      const totalHours = await timesCollection
+      const totalTime = await timesCollection
         .aggregate([
           { $match: { usuario: worker.usuario, status: "confirmed" } },
           {
             $group: {
               _id: "$usuario",
               totalHours: { $sum: "$totalHours" },
+              totalMinutes: { $sum: "$totalMinutes" },
             },
           },
         ])
         .toArray();
 
+      const requiredHours = rankMap[worker.category];
+      const totalWorkerHours =
+        totalTime.length > 0 ? totalTime[0].totalHours : 0;
+      const totalWorkerMinutes =
+        totalTime.length > 0 ? totalTime[0].totalMinutes : 0;
+
       if (
-        totalHours.length > 0 &&
-        totalHours[0].totalHours >= rankMap[worker.category]
+        (worker.halfTime && totalWorkerHours >= requiredHours / 2) ||
+        totalWorkerHours >= requiredHours
       ) {
         workersToPay.push({
           ...worker,
           halfTime: worker.halfTime,
           savedPayment: worker.savedPayment,
+          totalHours: totalWorkerHours,
+          totalMinutes: totalWorkerMinutes,
         });
       }
     }
