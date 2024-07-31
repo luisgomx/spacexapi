@@ -177,14 +177,15 @@ server.post(`/api/worker`, async (req, res) => {
       return res.status(409).json({ error: "Worker already exists" });
     }
 
-    // Insert the new worker into the collection with default values for savedPayment and halfTime
+    // Insert the new worker into the collection with default values for savedPayment, halfTime, and paid
     const result = await collection.insertOne({
       usuario,
       registradoPor,
       fecha,
       category,
-      savedPayment: false, // Add default value for savedPayment
-      halfTime: false, // Add default value for halfTime
+      savedPayment: false,
+      halfTime: false,
+      paid: false, // Add default value for paid
     });
     const insertedWorker = await collection.findOne({ _id: result.insertedId });
 
@@ -193,6 +194,35 @@ server.post(`/api/worker`, async (req, res) => {
       .json({ message: "Worker added successfully", worker: insertedWorker });
   } catch (e) {
     console.error("Error in /api/worker route:", e);
+    res.status(500).json({ error: "Error connecting to the database" });
+  }
+});
+
+// PUT route to update the paid status of a worker
+server.put(`/api/worker/:id/mark-paid`, async (req, res) => {
+  const { id } = req.params;
+  const { paid } = req.body;
+
+  try {
+    const collection = db.collection("workers");
+
+    const result = await collection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { paid } }
+    );
+
+    if (result.modifiedCount === 0) {
+      return res.status(404).json({ error: "Worker not found" });
+    }
+
+    const updatedWorker = await collection.findOne({ _id: new ObjectId(id) });
+
+    res.status(200).json({
+      message: "Worker paid status updated successfully",
+      worker: updatedWorker,
+    });
+  } catch (e) {
+    console.error("Error in /api/worker/:id/mark-paid route:", e);
     res.status(500).json({ error: "Error connecting to the database" });
   }
 });
@@ -451,7 +481,7 @@ server.get(`/api/validate-payments`, async (req, res) => {
     const ranks = await ranksCollection.find({}).toArray();
     const rankMap = {};
     ranks.forEach((rank) => {
-      rankMap[rank.rank] = rank.hours;
+      rankMap[rank.rank] = { hours: rank.hours, payment: rank.payment };
     });
 
     const workersToPay = [];
@@ -470,7 +500,8 @@ server.get(`/api/validate-payments`, async (req, res) => {
         ])
         .toArray();
 
-      const requiredHours = rankMap[worker.category];
+      const requiredHours = rankMap[worker.category].hours;
+      const paymentAmount = rankMap[worker.category].payment;
       const totalWorkerHours =
         totalTime.length > 0 ? totalTime[0].totalHours : 0;
       const totalWorkerMinutes =
@@ -486,6 +517,8 @@ server.get(`/api/validate-payments`, async (req, res) => {
           savedPayment: worker.savedPayment,
           totalHours: totalWorkerHours,
           totalMinutes: totalWorkerMinutes,
+          paid: worker.paid,
+          paymentAmount,
         });
       }
     }
