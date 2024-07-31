@@ -58,12 +58,12 @@ client
   });
 
 const ranks = [
-  { rank: "SEG", hours: 6 },
-  { rank: "TEC", hours: 8 },
-  { rank: "LOG", hours: 10 },
-  { rank: "HR", hours: 12 },
-  { rank: "DIR", hours: 14 },
-  { rank: "OP", hours: 16 },
+  { rank: "SEG", hours: 6, payment: 10 },
+  { rank: "TEC", hours: 8, payment: 20 },
+  { rank: "LOG", hours: 10, payment: 30 },
+  { rank: "HR", hours: 12, payment: 40 },
+  { rank: "DIR", hours: 14, payment: 50 },
+  { rank: "OP", hours: 16, payment: 60 },
 ];
 
 // const createRanksCollection = async () => {
@@ -221,6 +221,12 @@ server.put(`/api/worker/:id/mark-paid`, async (req, res) => {
       message: "Worker paid status updated successfully",
       worker: updatedWorker,
     });
+
+    // Broadcast the update via WebSocket
+    broadcastUpdate({
+      action: "mark-paid",
+      worker: updatedWorker,
+    });
   } catch (e) {
     console.error("Error in /api/worker/:id/mark-paid route:", e);
     res.status(500).json({ error: "Error connecting to the database" });
@@ -320,6 +326,17 @@ const calculateTotalTime = (startTime, endTime) => {
   return { hours, minutes: minutes % 60 };
 };
 
+// WebSocket setup
+const wss = new WebSocket.Server({ noServer: true });
+
+const broadcastUpdate = (message) => {
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify(message));
+    }
+  });
+};
+
 // POST route to manage timing
 server.post(`/api/timing`, async (req, res) => {
   const { usuario, action } = req.body;
@@ -348,6 +365,7 @@ server.post(`/api/timing`, async (req, res) => {
           createdAt: new Date(),
         };
         await collection.insertOne(newRecord);
+        broadcastUpdate({ action: "start", timing: newRecord });
         return res.status(201).json({
           message: "Timing started successfully",
           timing: newRecord,
@@ -389,6 +407,7 @@ server.post(`/api/timing`, async (req, res) => {
           { $set: update }
         );
         timing = { ...currentRecord, ...update };
+        broadcastUpdate({ action: "start", timing });
         break;
       case "pause":
         if (currentRecord.status === "active") {
@@ -434,6 +453,7 @@ server.post(`/api/timing`, async (req, res) => {
       message: "Timing updated successfully",
       timing: updatedRecord,
     });
+    broadcastUpdate({ action, timing: updatedRecord });
   } catch (e) {
     console.error("Error in /api/timing route:", e);
     res.status(500).json({ error: "Error connecting to the database" });
