@@ -1,6 +1,6 @@
 const express = require("express");
 const bcrypt = require("bcrypt");
-const { MongoClient } = require("mongodb");
+const { MongoClient, ObjectId } = require("mongodb");
 const WebSocket = require("ws");
 const schedule = require("node-schedule");
 const dotenv = require("dotenv");
@@ -11,7 +11,7 @@ dotenv.config();
 
 // Configuration
 const saltRounds = 10;
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3500;
 const MONGODB_URI = process.env.MONGODB_URI || "your-mongodb-uri";
 const DB_NAME = process.env.DB_NAME || "spacex";
 const COLLECTION_NAME = process.env.COLLECTION_NAME || "users";
@@ -56,6 +56,35 @@ client
   .catch((error) => {
     console.error("Error connecting to MongoDB:", error);
   });
+
+const ranks = [
+  { rank: "SEG", hours: 6 },
+  { rank: "TEC", hours: 8 },
+  { rank: "LOG", hours: 10 },
+  { rank: "HR", hours: 12 },
+  { rank: "DIR", hours: 14 },
+  { rank: "OP", hours: 16 },
+];
+
+// const createRanksCollection = async () => {
+//   try {
+//     const collection = db.collection("ranks");
+
+//     // Clear existing ranks (optional)
+//     await collection.deleteMany({});
+
+//     // Insert new ranks
+//     await collection.insertMany(ranks);
+
+//     console.log("Ranks collection created and populated successfully");
+//   } catch (error) {
+//     console.error("Error creating ranks collection:", error);
+//   } finally {
+//     await client.close();
+//   }
+// };
+
+// createRanksCollection();
 
 // POST route to add a new user
 server.post(`/api/users`, async (req, res) => {
@@ -148,12 +177,14 @@ server.post(`/api/worker`, async (req, res) => {
       return res.status(409).json({ error: "Worker already exists" });
     }
 
-    // Insert the new worker into the collection
+    // Insert the new worker into the collection with default values for savedPayment and halfTime
     const result = await collection.insertOne({
       usuario,
       registradoPor,
       fecha,
       category,
+      savedPayment: false, // Add default value for savedPayment
+      halfTime: false, // Add default value for halfTime
     });
     const insertedWorker = await collection.findOne({ _id: result.insertedId });
 
@@ -177,26 +208,80 @@ server.get(`/api/workers`, async (req, res) => {
     res.status(200).json(workers);
   } catch (e) {
     console.error("Error in /api/workers route:", e);
+    res.status500().json({ error: "Error connecting to the database" });
+  }
+});
+
+// GET route to fetch ranks
+server.get(`/api/ranks`, async (req, res) => {
+  try {
+    const collection = db.collection("ranks");
+    const ranks = await collection.find({}).toArray();
+    res.status(200).json(ranks);
+  } catch (e) {
+    console.error("Error in /api/ranks route:", e);
     res.status(500).json({ error: "Error connecting to the database" });
   }
 });
 
-// WebSocket setup
-const wss = new WebSocket.Server({ noServer: true });
+// PUT route to update a worker
+server.put(`/api/worker/:id`, async (req, res) => {
+  const { id } = req.params;
+  const { usuario, category, savedPayment, halfTime } = req.body;
 
-wss.on("connection", (ws) => {
-  ws.on("message", (message) => {
-    // Handle incoming messages if necessary
-  });
+  if (!usuario || !category) {
+    return res.status(400).json({ error: "Usuario and category are required" });
+  }
+
+  try {
+    const collection = db.collection("workers");
+
+    const result = await collection.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          usuario,
+          category,
+          savedPayment,
+          halfTime,
+        },
+      }
+    );
+
+    if (result.modifiedCount === 0) {
+      return res.status(404).json({ error: "Worker not found" });
+    }
+
+    const updatedWorker = await collection.findOne({ _id: new ObjectId(id) });
+
+    res.status(200).json({
+      message: "Worker updated successfully",
+      worker: updatedWorker,
+    });
+  } catch (e) {
+    console.error("Error in /api/worker/:id route:", e);
+    res.status(500).json({ error: "Error connecting to the database" });
+  }
 });
 
-const broadcastTimingUpdate = (timing) => {
-  wss.clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify(timing));
+// GET route to fetch a worker's details by ID
+server.get(`/api/worker/:id`, async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const collection = db.collection("workers");
+    const worker = await collection.findOne({ _id: new ObjectId(id) });
+
+    if (!worker) {
+      return res.status(404).json({ error: "Worker not found" });
     }
-  });
-};
+
+    res.status(200).json(worker);
+  } catch (e) {
+    console.error("Error in /api/worker/:id route:", e);
+    res.status(500).json({ error: "Error connecting to the database" });
+  }
+});
 
 const calculateTotalTime = (startTime, endTime) => {
   const duration = (new Date(endTime) - new Date(startTime)) / 1000; // Duration in seconds
@@ -233,7 +318,6 @@ server.post(`/api/timing`, async (req, res) => {
           createdAt: new Date(),
         };
         await collection.insertOne(newRecord);
-        broadcastTimingUpdate(newRecord);
         return res.status(201).json({
           message: "Timing started successfully",
           timing: newRecord,
@@ -316,7 +400,6 @@ server.post(`/api/timing`, async (req, res) => {
 
     await collection.updateOne({ _id: currentRecord._id }, { $set: update });
     const updatedRecord = await collection.findOne({ _id: currentRecord._id });
-    broadcastTimingUpdate(updatedRecord);
     res.status(200).json({
       message: "Timing updated successfully",
       timing: updatedRecord,
@@ -357,24 +440,76 @@ server.get(`/api/workers/timing`, async (req, res) => {
   }
 });
 
+// POST route to validate workers' payment eligibility
+
+// GET route to validate workers' payment eligibility
+server.get(`/api/validate-payments`, async (req, res) => {
+  try {
+    const workersCollection = db.collection("workers");
+    const timesCollection = db.collection("times");
+    const ranksCollection = db.collection("ranks");
+
+    const workers = await workersCollection.find({}).toArray();
+    const ranks = await ranksCollection.find({}).toArray();
+    const rankMap = {};
+    ranks.forEach((rank) => {
+      rankMap[rank.rank] = rank.hours;
+    });
+
+    const workersToPay = [];
+
+    for (const worker of workers) {
+      const totalHours = await timesCollection
+        .aggregate([
+          { $match: { usuario: worker.usuario, status: "confirmed" } },
+          {
+            $group: {
+              _id: "$usuario",
+              totalHours: { $sum: "$totalHours" },
+            },
+          },
+        ])
+        .toArray();
+
+      if (
+        totalHours.length > 0 &&
+        totalHours[0].totalHours >= rankMap[worker.category]
+      ) {
+        workersToPay.push({
+          ...worker,
+          halfTime: worker.halfTime,
+          savedPayment: worker.savedPayment,
+        });
+      }
+    }
+
+    res.status(200).json(workersToPay);
+  } catch (e) {
+    console.error("Error in /api/validate-payments route:", e);
+    res.status(500).json({ error: "Error validating payments" });
+  }
+});
+
 // Schedule cleanup of times collection every Sunday after payroll
 const cleanupTimesCollection = async () => {
   try {
     const timesCollection = db.collection("times");
 
+    // Delete all records where savedPayment is false
     await timesCollection.deleteMany({});
-    console.log("Times collection cleared after payroll.");
+    console.log(
+      "Times collection cleared after payroll, except for records with savedPayment true."
+    );
   } catch (e) {
     console.error("Error clearing times collection:", e);
   }
 };
 
-// Schedule cleanup at 2:00 AM every Sunday
 schedule.scheduleJob("0 2 * * 0", cleanupTimesCollection);
 
 // Start the server
 const serverInstance = server.listen(PORT, () => {
-  console.log(`Server is running on `);
+  console.log(`Server is running on ${API_BASE_URL}`);
 });
 
 // WebSocket upgrade handling
