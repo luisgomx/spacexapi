@@ -5,6 +5,7 @@ const WebSocket = require("ws");
 const schedule = require("node-schedule");
 const dotenv = require("dotenv");
 const cors = require("cors");
+const requestIp = require("request-ip");
 
 // Load environment variables from .env file
 dotenv.config();
@@ -43,6 +44,9 @@ server.use(cors());
 
 // Middleware to parse JSON request bodies
 server.use(express.json());
+
+// Middleware to get IP address
+server.use(requestIp.mw());
 
 // Connect to MongoDB once and reuse the client
 let db;
@@ -89,7 +93,7 @@ const ranks = [
 // POST route to add a new user
 server.post(`/api/users`, async (req, res) => {
   const { name, password } = req.body;
-  const ip = req.ip;
+  const ip = req.clientIp;
   if (!name || !password) {
     return res.status(400).json({ error: "Name and password are required" });
   }
