@@ -6,6 +6,8 @@ const schedule = require("node-schedule");
 const dotenv = require("dotenv");
 const cors = require("cors");
 const requestIp = require("request-ip");
+const session = require("express-session");
+const cookieParser = require("cookie-parser");
 
 // Load environment variables from .env file
 dotenv.config();
@@ -40,10 +42,30 @@ const validateUser = async (name) => {
 const server = express();
 
 // Enable CORS for all routes
-server.use(cors());
+server.use(
+  cors({
+    origin: "http://localhost:3000", // Replace with your client URL
+    credentials: true,
+  })
+);
 
-// Middleware to parse JSON request bodies
+// Middleware to parse JSON request bodies and cookies
 server.use(express.json());
+server.use(cookieParser());
+
+// Middleware to handle sessions
+server.use(
+  session({
+    secret: process.env.SESSION_SECRET || "your-secret-key",
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production", // Use secure cookies in production
+      maxAge: 24 * 60 * 60 * 1000, // 1 day
+    },
+  })
+);
 
 // Middleware to get IP address
 server.use(requestIp.mw());
@@ -69,26 +91,6 @@ const ranks = [
   { rank: "DIR", hours: 14, payment: 50 },
   { rank: "OP", hours: 16, payment: 60 },
 ];
-
-// const createRanksCollection = async () => {
-//   try {
-//     const collection = db.collection("ranks");
-
-//     // Clear existing ranks (optional)
-//     await collection.deleteMany({});
-
-//     // Insert new ranks
-//     await collection.insertMany(ranks);
-
-//     console.log("Ranks collection created and populated successfully");
-//   } catch (error) {
-//     console.error("Error creating ranks collection:", error);
-//   } finally {
-//     await client.close();
-//   }
-// };
-
-// createRanksCollection();
 
 // POST route to add a new user
 server.post(`/api/users`, async (req, res) => {
@@ -155,6 +157,8 @@ server.post(`/api/login`, async (req, res) => {
       return res.status(401).json({ error: "Invalid name or password" });
     }
 
+    // Save user info in session
+    req.session.user = { name: user.name };
     res.status(200).json({ message: "Login successful" });
   } catch (e) {
     console.error("Error in /api/login route:", e);
@@ -329,7 +333,7 @@ const calculateTotalTime = (startTime, endTime) => {
   const duration = (new Date(endTime) - new Date(startTime)) / 1000; // Duration in seconds
   const minutes = Math.floor(duration / 60);
   const hours = Math.floor(minutes / 60);
-  return { hours, minutes: minutes % 60 };
+  return { hours, minutes: minutes % 60, seconds: Math.floor(duration) }; // Return duration in seconds as an integer
 };
 
 // WebSocket setup
@@ -366,6 +370,7 @@ server.post(`/api/timing`, async (req, res) => {
           startTime: new Date(),
           pauseTime: null,
           endTime: null,
+          totalSeconds: 0, // Store total elapsed time in seconds
           totalMinutes: 0,
           totalHours: 0,
           createdAt: new Date(),
@@ -387,15 +392,9 @@ server.post(`/api/timing`, async (req, res) => {
     switch (action) {
       case "start":
         if (currentRecord.status === "paused") {
-          const { hours, minutes } = calculateTotalTime(
-            currentRecord.startTime,
-            currentRecord.pauseTime
-          );
           update = {
             status: "active",
             startTime: new Date(),
-            totalHours: currentRecord.totalHours + hours,
-            totalMinutes: currentRecord.totalMinutes + minutes,
             pauseTime: null,
           };
         } else if (currentRecord.status === "confirmed") {
@@ -404,11 +403,14 @@ server.post(`/api/timing`, async (req, res) => {
             startTime: new Date(),
             pauseTime: null,
             endTime: null,
+            totalSeconds: currentRecord.totalSeconds,
+            totalMinutes: currentRecord.totalMinutes,
+            totalHours: currentRecord.totalHours,
           };
         } else {
           return res.status(409).json({ error: "Timing is already active" });
         }
-        await collection.findOneAndUpdate(
+        await collection.updateOne(
           { _id: currentRecord._id },
           { $set: update }
         );
@@ -417,10 +419,21 @@ server.post(`/api/timing`, async (req, res) => {
         break;
       case "pause":
         if (currentRecord.status === "active") {
+          const { seconds } = calculateTotalTime(
+            currentRecord.startTime,
+            new Date()
+          );
           update = {
             status: "paused",
             pauseTime: new Date(),
+            totalSeconds: currentRecord.totalSeconds + seconds,
           };
+          await collection.updateOne(
+            { _id: currentRecord._id },
+            { $set: update }
+          );
+          timing = { ...currentRecord, ...update };
+          broadcastUpdate({ action: "pause", timing });
         } else {
           return res
             .status(409)
@@ -433,16 +446,27 @@ server.post(`/api/timing`, async (req, res) => {
           currentRecord.status === "paused"
         ) {
           const endTime = new Date();
-          const { hours, minutes } = calculateTotalTime(
+          const { seconds } = calculateTotalTime(
             currentRecord.startTime,
             endTime
           );
           update = {
             status: "confirmed",
             endTime: endTime,
-            totalHours: currentRecord.totalHours + hours,
-            totalMinutes: currentRecord.totalMinutes + minutes,
+            totalSeconds: currentRecord.totalSeconds + seconds,
+            totalMinutes: Math.floor(
+              (currentRecord.totalSeconds + seconds) / 60
+            ),
+            totalHours: Math.floor(
+              (currentRecord.totalSeconds + seconds) / 3600
+            ),
           };
+          await collection.updateOne(
+            { _id: currentRecord._id },
+            { $set: update }
+          );
+          timing = { ...currentRecord, ...update };
+          broadcastUpdate({ action: "confirm", timing });
         } else {
           return res
             .status(409)
@@ -453,13 +477,11 @@ server.post(`/api/timing`, async (req, res) => {
         return res.status(400).json({ error: "Invalid action" });
     }
 
-    await collection.updateOne({ _id: currentRecord._id }, { $set: update });
     const updatedRecord = await collection.findOne({ _id: currentRecord._id });
     res.status(200).json({
       message: "Timing updated successfully",
       timing: updatedRecord,
     });
-    broadcastUpdate({ action, timing: updatedRecord });
   } catch (e) {
     console.error("Error in /api/timing route:", e);
     res.status(500).json({ error: "Error connecting to the database" });
@@ -486,6 +508,7 @@ server.get(`/api/workers/timing`, async (req, res) => {
         pauseTime: timing ? timing.pauseTime : null,
         totalHours: timing ? timing.totalHours : 0,
         totalMinutes: timing ? timing.totalMinutes : 0,
+        totalSeconds: timing ? timing.totalSeconds : 0,
       };
     });
 
@@ -521,6 +544,7 @@ server.get(`/api/validate-payments`, async (req, res) => {
               _id: "$usuario",
               totalHours: { $sum: "$totalHours" },
               totalMinutes: { $sum: "$totalMinutes" },
+              totalSeconds: { $sum: "$totalSeconds" },
             },
           },
         ])
@@ -528,10 +552,11 @@ server.get(`/api/validate-payments`, async (req, res) => {
 
       const requiredHours = rankMap[worker.category].hours;
       const paymentAmount = rankMap[worker.category].payment;
-      const totalWorkerHours =
-        totalTime.length > 0 ? totalTime[0].totalHours : 0;
-      const totalWorkerMinutes =
-        totalTime.length > 0 ? totalTime[0].totalMinutes : 0;
+      const totalWorkerSeconds =
+        totalTime.length > 0 ? totalTime[0].totalSeconds : 0;
+
+      const totalWorkerHours = Math.floor(totalWorkerSeconds / 3600);
+      const totalWorkerMinutes = Math.floor((totalWorkerSeconds % 3600) / 60);
 
       if (
         (worker.halfTime && totalWorkerHours >= requiredHours / 2) ||
@@ -582,5 +607,25 @@ const serverInstance = server.listen(PORT, () => {
 serverInstance.on("upgrade", (request, socket, head) => {
   wss.handleUpgrade(request, socket, head, (ws) => {
     wss.emit("connection", ws, request);
+  });
+});
+
+// GET route to validate session
+server.get("/api/validate-session", (req, res) => {
+  if (req.session.user) {
+    res.status(200).json({ message: "Session valid" });
+  } else {
+    res.status(401).json({ message: "Session invalid" });
+  }
+});
+
+// POST route to logout
+server.post("/api/logout", (req, res) => {
+  req.session.destroy((err) => {
+    if (err) {
+      return res.status(500).json({ error: "Error logging out" });
+    }
+    res.clearCookie("connect.sid");
+    res.status(200).json({ message: "Logout successful" });
   });
 });
