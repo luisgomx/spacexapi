@@ -640,7 +640,7 @@ server.get(`/api/validate-payments`, verifyJWT, async (req, res) => {
     for (const user of users) {
       const totalMinutes = user.totalMinutes || 0;
       const assistances = Math.floor(totalMinutes / 60);
-      const requiredAssistances = rankMap["JD"]?.assistances || 30;
+      const requiredAssistances = rankMap["JD"]?.assistances || 15;
       const paymentAmount = rankMap["JD"]?.payment || 20;
       const paid = user.paid;
       if (assistances >= requiredAssistances) {
