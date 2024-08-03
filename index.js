@@ -28,12 +28,6 @@ const client = new MongoClient(MONGODB_URI, {
   useUnifiedTopology: true,
 });
 
-// Session store
-const store = new MongoDBStore({
-  uri: MONGODB_URI,
-  collection: "sessions",
-});
-
 const validateUser = async (name) => {
   const url = `https://www.habbo.es/habbo-imaging/avatarimage?user=${name}&action=none&direction=2&head_direction=2&gesture=&size=l&headonly=0`;
   try {
@@ -52,7 +46,7 @@ const server = express();
 // Enable CORS for all routes
 server.use(
   cors({
-    origin: CLIENT_URI, // Replace with your client URL
+    origin: CLIENT_URI,
     credentials: true,
   })
 );
@@ -60,6 +54,11 @@ server.use(
 // Middleware to parse JSON request bodies and cookies
 server.use(express.json());
 server.use(cookieParser());
+
+const store = new MongoDBStore({
+  uri: MONGODB_URI,
+  collection: "sessions",
+});
 
 // Middleware to handle sessions
 server.use(
@@ -69,10 +68,10 @@ server.use(
     saveUninitialized: false,
     store: store,
     cookie: {
-      httpOnly: true, // Secure the cookie by making it inaccessible to JavaScript
-      secure: process.env.NODE_ENV === "production", // Use secure cookies in production
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
       maxAge: 24 * 60 * 60 * 1000, // 1 day
-      sameSite: "Lax", // Provides a good balance between security and usability
+      sameSite: "Lax",
     },
   })
 );
@@ -207,28 +206,6 @@ server.post(`/api/login`, async (req, res) => {
   }
 });
 
-// GET route to validate session
-server.get("/api/validate-session", (req, res) => {
-  if (req.session.user) {
-    console.log("Session valid for user:", req.session.user);
-    res.status(200).json({ message: "Session valid" });
-  } else {
-    console.log("Session invalid");
-    res.status(401).json({ message: "Session invalid" });
-  }
-});
-
-// POST route to logout
-server.post("/api/logout", (req, res) => {
-  req.session.destroy((err) => {
-    if (err) {
-      return res.status(500).json({ error: "Error logging out" });
-    }
-    res.clearCookie("connect.sid");
-    res.status(200).json({ message: "Logout successful" });
-  });
-});
-
 // POST route to handle form submissions
 server.post(`/api/worker`, async (req, res) => {
   const { usuario, registradoPor, fecha, category } = req.body;
@@ -317,7 +294,7 @@ server.get(`/api/workers`, async (req, res) => {
     res.status(200).json(workers);
   } catch (e) {
     console.error("Error in /api/workers route:", e);
-    res.status500().json({ error: "Error connecting to the database" });
+    res.status(500).json({ error: "Error connecting to the database" });
   }
 });
 
@@ -720,5 +697,25 @@ const serverInstance = server.listen(PORT, () => {
 serverInstance.on("upgrade", (request, socket, head) => {
   wss.handleUpgrade(request, socket, head, (ws) => {
     wss.emit("connection", ws, request);
+  });
+});
+
+// GET route to validate session
+server.get("/api/validate-session", (req, res) => {
+  if (req.session.user) {
+    res.status(200).json({ message: "Session valid" });
+  } else {
+    res.status(401).json({ message: "Session invalid" });
+  }
+});
+
+// POST route to logout
+server.post("/api/logout", (req, res) => {
+  req.session.destroy((err) => {
+    if (err) {
+      return res.status(500).json({ error: "Error logging out" });
+    }
+    res.clearCookie("connect.sid");
+    res.status(200).json({ message: "Logout successful" });
   });
 });
