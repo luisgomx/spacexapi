@@ -19,6 +19,7 @@ const MONGODB_URI = process.env.MONGODB_URI || "your-mongodb-uri";
 const DB_NAME = process.env.DB_NAME || "spacex";
 const COLLECTION_NAME = process.env.COLLECTION_NAME || "users";
 const API_BASE_URL = process.env.API_BASE_URL || "http://localhost:3500";
+const CLIENT_URI = process.env.CLIENT_URI;
 
 // MongoDB client
 const client = new MongoClient(MONGODB_URI, {
@@ -44,7 +45,7 @@ const server = express();
 // Enable CORS for all routes
 server.use(
   cors({
-    origin: "http://localhost:3000", // Replace with your client URL
+    origin: CLIENT_URI, // Replace with your client URL
     credentials: true,
   })
 );
@@ -123,6 +124,9 @@ server.post(`/api/users`, async (req, res) => {
       name,
       password: hashedPassword,
       ip, // Store the IP address
+      totalMinutes: 0, // Initialize totalMinutes
+      assistedTimes: 0, // Initialize assistedTimes
+      paid: false,
     });
     const insertedUser = await collection.findOne({ _id: result.insertedId });
 
@@ -132,6 +136,31 @@ server.post(`/api/users`, async (req, res) => {
   } catch (e) {
     console.error("Error in /api/users route:", e);
     res.status(500).json({ error: "Error connecting to the database" });
+  }
+});
+
+server.put(`/api/user/:name/mark-paid`, async (req, res) => {
+  const { name } = req.params;
+  const { paid } = req.body;
+
+  try {
+    const result = await db
+      .collection(COLLECTION_NAME)
+      .updateOne({ name }, { $set: { paid } });
+
+    if (result.modifiedCount === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const updatedUser = await db.collection(COLLECTION_NAME).findOne({ name });
+
+    res.status(200).json({
+      message: "User paid status updated successfully",
+      user: updatedUser,
+    });
+  } catch (e) {
+    console.error("Error in /api/user/:name/mark-paid route:", e);
+    res.status(500).json({ error: "Error updating the user" });
   }
 });
 
@@ -145,21 +174,24 @@ server.post(`/api/login`, async (req, res) => {
   try {
     const collection = db.collection(COLLECTION_NAME);
 
-    // Find the user by name
     const user = await collection.findOne({ name });
     if (!user) {
       return res.status(401).json({ error: "Invalid name or password" });
     }
 
-    // Check if the provided password matches the stored hash
     const match = await bcrypt.compare(password, user.password);
     if (!match) {
       return res.status(401).json({ error: "Invalid name or password" });
     }
 
-    // Save user info in session
     req.session.user = { name: user.name };
-    res.status(200).json({ message: "Login successful" });
+    req.session.save((err) => {
+      if (err) {
+        console.error("Session save error:", err);
+        return res.status(500).json({ error: "Error saving session" });
+      }
+      res.status(200).json({ message: "Login successful" });
+    });
   } catch (e) {
     console.error("Error in /api/login route:", e);
     res.status(500).json({ error: "Error connecting to the database" });
@@ -348,11 +380,14 @@ const broadcastUpdate = (message) => {
 };
 
 // POST route to manage timing
+// POST route to manage timing
 server.post(`/api/timing`, async (req, res) => {
-  const { usuario, action } = req.body;
+  const { usuario, action, username } = req.body;
   if (!usuario || !action) {
     return res.status(400).json({ error: "Usuario and action are required" });
   }
+
+  const user = username;
 
   try {
     const collection = db.collection("times");
@@ -371,8 +406,7 @@ server.post(`/api/timing`, async (req, res) => {
           pauseTime: null,
           endTime: null,
           totalSeconds: 0, // Store total elapsed time in seconds
-          totalMinutes: 0,
-          totalHours: 0,
+          createdBy: user,
           createdAt: new Date(),
         };
         await collection.insertOne(newRecord);
@@ -396,6 +430,7 @@ server.post(`/api/timing`, async (req, res) => {
             status: "active",
             startTime: new Date(),
             pauseTime: null,
+            createdBy: user, // Update createdBy field
           };
         } else if (currentRecord.status === "confirmed") {
           update = {
@@ -404,8 +439,7 @@ server.post(`/api/timing`, async (req, res) => {
             pauseTime: null,
             endTime: null,
             totalSeconds: currentRecord.totalSeconds,
-            totalMinutes: currentRecord.totalMinutes,
-            totalHours: currentRecord.totalHours,
+            createdBy: user, // Update createdBy field
           };
         } else {
           return res.status(409).json({ error: "Timing is already active" });
@@ -460,7 +494,27 @@ server.post(`/api/timing`, async (req, res) => {
             totalHours: Math.floor(
               (currentRecord.totalSeconds + seconds) / 3600
             ),
+            confirmedBy: user,
           };
+
+          // If the same user starts and confirms, add totalMinutes to the user's assistedTimes
+          if (currentRecord.createdBy === user) {
+            const minutesToAdd =
+              update.totalMinutes - (currentRecord.totalMinutes || 0);
+            console.log("minutesToAdd:", minutesToAdd);
+            const updateResult = await db.collection(COLLECTION_NAME).updateOne(
+              { name: user },
+              {
+                $inc: {
+                  totalMinutes: minutesToAdd,
+                  assistedTimes: minutesToAdd,
+                },
+              },
+              { upsert: true }
+            );
+            console.log("Update result:", updateResult);
+          }
+
           await collection.updateOne(
             { _id: currentRecord._id },
             { $set: update }
@@ -509,6 +563,8 @@ server.get(`/api/workers/timing`, async (req, res) => {
         totalHours: timing ? timing.totalHours : 0,
         totalMinutes: timing ? timing.totalMinutes : 0,
         totalSeconds: timing ? timing.totalSeconds : 0,
+        createdBy: timing ? timing.createdBy : null,
+        confirmedBy: timing ? timing.confirmedBy : null,
       };
     });
 
@@ -525,16 +581,24 @@ server.get(`/api/validate-payments`, async (req, res) => {
     const workersCollection = db.collection("workers");
     const timesCollection = db.collection("times");
     const ranksCollection = db.collection("ranks");
+    const usersCollection = db.collection(COLLECTION_NAME);
 
     const workers = await workersCollection.find({}).toArray();
     const ranks = await ranksCollection.find({}).toArray();
+    const users = await usersCollection.find({}).toArray();
+
     const rankMap = {};
     ranks.forEach((rank) => {
-      rankMap[rank.rank] = { hours: rank.hours, payment: rank.payment };
+      rankMap[rank.rank] = {
+        hours: rank.hours,
+        payment: rank.payment,
+        assistances: rank.assistances,
+      };
     });
 
     const workersToPay = [];
 
+    // Validate workers
     for (const worker of workers) {
       const totalTime = await timesCollection
         .aggregate([
@@ -574,7 +638,26 @@ server.get(`/api/validate-payments`, async (req, res) => {
       }
     }
 
-    res.status(200).json(workersToPay);
+    // Validate users with JD rank
+    const usersToPay = [];
+    for (const user of users) {
+      const totalMinutes = user.totalMinutes || 0;
+      const assistances = Math.floor(totalMinutes / 60);
+      const requiredAssistances = rankMap["JD"]?.assistances || 30;
+      const paymentAmount = rankMap["JD"]?.payment || 20;
+      const paid = user.paid;
+      if (assistances >= requiredAssistances) {
+        usersToPay.push({
+          name: user.name,
+          assistances,
+          totalMinutes,
+          paymentAmount,
+          paid,
+        });
+      }
+    }
+
+    res.status(200).json({ workersToPay, usersToPay });
   } catch (e) {
     console.error("Error in /api/validate-payments route:", e);
     res.status(500).json({ error: "Error validating payments" });
