@@ -1,14 +1,12 @@
 const express = require("express");
 const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
 const { MongoClient, ObjectId } = require("mongodb");
 const WebSocket = require("ws");
 const schedule = require("node-schedule");
 const dotenv = require("dotenv");
 const cors = require("cors");
 const requestIp = require("request-ip");
-const session = require("express-session");
-const cookieParser = require("cookie-parser");
-const MongoDBStore = require("connect-mongodb-session")(session);
 
 // Load environment variables from .env file
 dotenv.config();
@@ -20,7 +18,7 @@ const MONGODB_URI = process.env.MONGODB_URI || "your-mongodb-uri";
 const DB_NAME = process.env.DB_NAME || "spacex";
 const COLLECTION_NAME = process.env.COLLECTION_NAME || "users";
 const API_BASE_URL = process.env.API_BASE_URL || "http://localhost:3500";
-const CLIENT_URI = process.env.CLIENT_URI;
+const JWT_SECRET = process.env.JWT_SECRET || "your-jwt-secret";
 
 // MongoDB client
 const client = new MongoClient(MONGODB_URI, {
@@ -46,37 +44,13 @@ const server = express();
 // Enable CORS for all routes
 server.use(
   cors({
-    origin: CLIENT_URI,
+    origin: process.env.CLIENT_URI,
     credentials: true,
   })
 );
 
 // Middleware to parse JSON request bodies and cookies
 server.use(express.json());
-server.use(cookieParser());
-
-const store = new MongoDBStore({
-  uri: MONGODB_URI,
-  collection: "sessions",
-});
-
-// Middleware to handle sessions
-server.use(
-  session({
-    secret: process.env.SESSION_SECRET || "your-secret-key",
-    resave: false,
-    saveUninitialized: false,
-    store: store,
-    cookie: {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      maxAge: 24 * 60 * 60 * 1000, // 1 day
-      sameSite: "Lax",
-    },
-  })
-);
-
-// Middleware to get IP address
 server.use(requestIp.mw());
 
 // Connect to MongoDB once and reuse the client
@@ -100,6 +74,24 @@ const ranks = [
   { rank: "DIR", hours: 14, payment: 50 },
   { rank: "OP", hours: 16, payment: 60 },
 ];
+
+// Middleware to authenticate and authorize JWT token
+const verifyJWT = (req, res, next) => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+
+  if (!token) {
+    return res.status(403).json({ message: "Forbidden" });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    req.user = decoded;
+    next();
+  });
+};
 
 // POST route to add a new user
 server.post(`/api/users`, async (req, res) => {
@@ -147,7 +139,7 @@ server.post(`/api/users`, async (req, res) => {
   }
 });
 
-server.put(`/api/user/:name/mark-paid`, async (req, res) => {
+server.put(`/api/user/:name/mark-paid`, verifyJWT, async (req, res) => {
   const { name } = req.params;
   const { paid } = req.body;
 
@@ -192,14 +184,12 @@ server.post(`/api/login`, async (req, res) => {
       return res.status(401).json({ error: "Invalid name or password" });
     }
 
-    req.session.user = { name: user.name };
-    req.session.save((err) => {
-      if (err) {
-        console.error("Session save error:", err);
-        return res.status(500).json({ error: "Error saving session" });
-      }
-      res.status(200).json({ message: "Login successful" });
+    // Generate JWT
+    const token = jwt.sign({ name: user.name }, JWT_SECRET, {
+      expiresIn: "1d",
     });
+
+    res.status(200).json({ message: "Login successful", token });
   } catch (e) {
     console.error("Error in /api/login route:", e);
     res.status(500).json({ error: "Error connecting to the database" });
@@ -207,7 +197,7 @@ server.post(`/api/login`, async (req, res) => {
 });
 
 // POST route to handle form submissions
-server.post(`/api/worker`, async (req, res) => {
+server.post(`/api/worker`, verifyJWT, async (req, res) => {
   const { usuario, registradoPor, fecha, category } = req.body;
   if (!usuario || !registradoPor || !fecha || !category) {
     return res.status(400).json({ error: "All fields are required" });
@@ -249,7 +239,7 @@ server.post(`/api/worker`, async (req, res) => {
 });
 
 // PUT route to update the paid status of a worker
-server.put(`/api/worker/:id/mark-paid`, async (req, res) => {
+server.put(`/api/worker/:id/mark-paid`, verifyJWT, async (req, res) => {
   const { id } = req.params;
   const { paid } = req.body;
 
@@ -284,7 +274,7 @@ server.put(`/api/worker/:id/mark-paid`, async (req, res) => {
 });
 
 // GET route to fetch all workers
-server.get(`/api/workers`, async (req, res) => {
+server.get(`/api/workers`, verifyJWT, async (req, res) => {
   try {
     const collection = db.collection("workers");
 
@@ -294,12 +284,12 @@ server.get(`/api/workers`, async (req, res) => {
     res.status(200).json(workers);
   } catch (e) {
     console.error("Error in /api/workers route:", e);
-    res.status(500).json({ error: "Error connecting to the database" });
+    res.status500().json({ error: "Error connecting to the database" });
   }
 });
 
 // GET route to fetch ranks
-server.get(`/api/ranks`, async (req, res) => {
+server.get(`/api/ranks`, verifyJWT, async (req, res) => {
   try {
     const collection = db.collection("ranks");
     const ranks = await collection.find({}).toArray();
@@ -311,7 +301,7 @@ server.get(`/api/ranks`, async (req, res) => {
 });
 
 // PUT route to update a worker
-server.put(`/api/worker/:id`, async (req, res) => {
+server.put(`/api/worker/:id`, verifyJWT, async (req, res) => {
   const { id } = req.params;
   const { usuario, category, savedPayment, halfTime } = req.body;
 
@@ -351,7 +341,7 @@ server.put(`/api/worker/:id`, async (req, res) => {
 });
 
 // GET route to fetch a worker's details by ID
-server.get(`/api/worker/:id`, async (req, res) => {
+server.get(`/api/worker/:id`, verifyJWT, async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -388,7 +378,7 @@ const broadcastUpdate = (message) => {
 };
 
 // POST route to manage timing
-server.post(`/api/timing`, async (req, res) => {
+server.post(`/api/timing`, verifyJWT, async (req, res) => {
   const { usuario, action, username } = req.body;
   if (!usuario || !action) {
     return res.status(400).json({ error: "Usuario and action are required" });
@@ -550,7 +540,7 @@ server.post(`/api/timing`, async (req, res) => {
 });
 
 // GET route to fetch workers with their timing status
-server.get(`/api/workers/timing`, async (req, res) => {
+server.get(`/api/workers/timing`, verifyJWT, async (req, res) => {
   try {
     const workersCollection = db.collection("workers");
     const timesCollection = db.collection("times");
@@ -583,7 +573,7 @@ server.get(`/api/workers/timing`, async (req, res) => {
 });
 
 // GET route to validate workers' payment eligibility
-server.get(`/api/validate-payments`, async (req, res) => {
+server.get(`/api/validate-payments`, verifyJWT, async (req, res) => {
   try {
     const workersCollection = db.collection("workers");
     const timesCollection = db.collection("times");
@@ -621,8 +611,8 @@ server.get(`/api/validate-payments`, async (req, res) => {
         ])
         .toArray();
 
-      const requiredHours = rankMap[worker.category].hours;
-      const paymentAmount = rankMap[worker.category].payment;
+      const requiredHours = rankMap[worker.category]?.hours;
+      const paymentAmount = rankMap[worker.category]?.payment;
       const totalWorkerSeconds =
         totalTime.length > 0 ? totalTime[0].totalSeconds : 0;
 
@@ -701,8 +691,8 @@ serverInstance.on("upgrade", (request, socket, head) => {
 });
 
 // GET route to validate session
-server.get("/api/validate-session", (req, res) => {
-  if (req.session.user) {
+server.get("/api/validate-session", verifyJWT, (req, res) => {
+  if (req.user) {
     res.status(200).json({ message: "Session valid" });
   } else {
     res.status(401).json({ message: "Session invalid" });
@@ -710,12 +700,6 @@ server.get("/api/validate-session", (req, res) => {
 });
 
 // POST route to logout
-server.post("/api/logout", (req, res) => {
-  req.session.destroy((err) => {
-    if (err) {
-      return res.status(500).json({ error: "Error logging out" });
-    }
-    res.clearCookie("connect.sid");
-    res.status(200).json({ message: "Logout successful" });
-  });
+server.post("/api/logout", verifyJWT, (req, res) => {
+  res.status(200).json({ message: "Logout successful" });
 });
