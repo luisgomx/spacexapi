@@ -8,6 +8,7 @@ const cors = require("cors");
 const requestIp = require("request-ip");
 const session = require("express-session");
 const cookieParser = require("cookie-parser");
+const MongoDBStore = require("connect-mongodb-session")(session);
 
 // Load environment variables from .env file
 dotenv.config();
@@ -19,7 +20,7 @@ const MONGODB_URI = process.env.MONGODB_URI || "your-mongodb-uri";
 const DB_NAME = process.env.DB_NAME || "spacex";
 const COLLECTION_NAME = process.env.COLLECTION_NAME || "users";
 const API_BASE_URL = process.env.API_BASE_URL || "http://localhost:3500";
-const CLIENT_URI = process.env.CLIENT_URI;
+const CLIENT_URI = process.env.CLIENT_URI || "http://localhost:3000";
 
 // MongoDB client
 const client = new MongoClient(MONGODB_URI, {
@@ -27,6 +28,7 @@ const client = new MongoClient(MONGODB_URI, {
   useUnifiedTopology: true,
 });
 
+// Validate User Function
 const validateUser = async (name) => {
   const url = `https://www.habbo.es/habbo-imaging/avatarimage?user=${name}&action=none&direction=2&head_direction=2&gesture=&size=l&headonly=0`;
   try {
@@ -45,7 +47,7 @@ const server = express();
 // Enable CORS for all routes
 server.use(
   cors({
-    origin: CLIENT_URI, // Replace with your client URL
+    origin: CLIENT_URI,
     credentials: true,
   })
 );
@@ -54,16 +56,28 @@ server.use(
 server.use(express.json());
 server.use(cookieParser());
 
+// Session store setup
+const store = new MongoDBStore({
+  uri: MONGODB_URI,
+  collection: "sessions",
+});
+
+store.on("error", function (error) {
+  console.log(error);
+});
+
 // Middleware to handle sessions
 server.use(
   session({
     secret: process.env.SESSION_SECRET || "your-secret-key",
     resave: false,
     saveUninitialized: false,
+    store: store,
     cookie: {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production", // Use secure cookies in production
       maxAge: 24 * 60 * 60 * 1000, // 1 day
+      sameSite: "Lax", // Adjust sameSite attribute based on your setup
     },
   })
 );
@@ -380,7 +394,6 @@ const broadcastUpdate = (message) => {
 };
 
 // POST route to manage timing
-// POST route to manage timing
 server.post(`/api/timing`, async (req, res) => {
   const { usuario, action, username } = req.body;
   if (!usuario || !action) {
@@ -507,7 +520,7 @@ server.post(`/api/timing`, async (req, res) => {
               {
                 $inc: {
                   totalMinutes: minutesToAdd,
-                  assistedTimes: minutesToAdd,
+                  assistedTimes: Math.floor(minutesToAdd / 60),
                 },
               },
               { upsert: true }
