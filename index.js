@@ -94,7 +94,7 @@ const verifyJWT = (req, res, next) => {
 };
 
 // POST route to add a new user
-server.post(`/api/users`, async (req, res) => {
+/* server.post(`/api/users`, async (req, res) => {
   const { name, password } = req.body;
   const ip = req.clientIp;
   if (!name || !password) {
@@ -138,7 +138,7 @@ server.post(`/api/users`, async (req, res) => {
     res.status(500).json({ error: "Error connecting to the database" });
   }
 });
-
+*/
 server.put(`/api/user/:name/mark-paid`, verifyJWT, async (req, res) => {
   const { name } = req.params;
   const { paid } = req.body;
