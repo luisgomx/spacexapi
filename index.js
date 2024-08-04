@@ -7,6 +7,7 @@ const schedule = require("node-schedule");
 const dotenv = require("dotenv");
 const cors = require("cors");
 const requestIp = require("request-ip");
+const cookieParser = require("cookie-parser");
 
 // Load environment variables from .env file
 dotenv.config();
@@ -51,6 +52,9 @@ server.use(
 
 // Middleware to parse JSON request bodies and cookies
 server.use(express.json());
+server.use(cookieParser());
+
+// Middleware to get IP address
 server.use(requestIp.mw());
 
 // Connect to MongoDB once and reuse the client
@@ -75,26 +79,8 @@ const ranks = [
   { rank: "OP", hours: 16, payment: 60 },
 ];
 
-// Middleware to authenticate and authorize JWT token
-const verifyJWT = (req, res, next) => {
-  const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1];
-
-  if (!token) {
-    return res.status(403).json({ message: "Forbidden" });
-  }
-
-  jwt.verify(token, JWT_SECRET, (err, decoded) => {
-    if (err) {
-      return res.status(403).json({ message: "Forbidden" });
-    }
-    req.user = decoded;
-    next();
-  });
-};
-
 // POST route to add a new user
-/* server.post(`/api/users`, async (req, res) => {
+server.post(`/api/users`, async (req, res) => {
   const { name, password } = req.body;
   const ip = req.clientIp;
   if (!name || !password) {
@@ -138,8 +124,8 @@ const verifyJWT = (req, res, next) => {
     res.status(500).json({ error: "Error connecting to the database" });
   }
 });
-*/
-server.put(`/api/user/:name/mark-paid`, verifyJWT, async (req, res) => {
+
+server.put(`/api/user/:name/mark-paid`, async (req, res) => {
   const { name } = req.params;
   const { paid } = req.body;
 
@@ -170,8 +156,6 @@ server.post(`/api/login`, async (req, res) => {
   if (!name || !password) {
     return res.status(400).json({ error: "Name and password are required" });
   }
-  
-  console.log('login attempt user', name);
 
   try {
     const collection = db.collection(COLLECTION_NAME);
@@ -186,10 +170,8 @@ server.post(`/api/login`, async (req, res) => {
       return res.status(401).json({ error: "Invalid name or password" });
     }
 
-    // Generate JWT
-    const token = jwt.sign({ name: user.name }, JWT_SECRET, {
-      expiresIn: "1d",
-    });
+    // Generate JWT without expiration
+    const token = jwt.sign({ name: user.name }, JWT_SECRET);
 
     res.status(200).json({ message: "Login successful", token });
   } catch (e) {
@@ -198,8 +180,21 @@ server.post(`/api/login`, async (req, res) => {
   }
 });
 
+// Middleware to authenticate and authorize JWT token
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+  if (!token) return res.sendStatus(401);
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) return res.sendStatus(403);
+    req.user = user;
+    next();
+  });
+};
+
 // POST route to handle form submissions
-server.post(`/api/worker`, verifyJWT, async (req, res) => {
+server.post(`/api/worker`, authenticateToken, async (req, res) => {
   const { usuario, registradoPor, fecha, category } = req.body;
   if (!usuario || !registradoPor || !fecha || !category) {
     return res.status(400).json({ error: "All fields are required" });
@@ -241,7 +236,7 @@ server.post(`/api/worker`, verifyJWT, async (req, res) => {
 });
 
 // PUT route to update the paid status of a worker
-server.put(`/api/worker/:id/mark-paid`, verifyJWT, async (req, res) => {
+server.put(`/api/worker/:id/mark-paid`, authenticateToken, async (req, res) => {
   const { id } = req.params;
   const { paid } = req.body;
 
@@ -276,7 +271,7 @@ server.put(`/api/worker/:id/mark-paid`, verifyJWT, async (req, res) => {
 });
 
 // GET route to fetch all workers
-server.get(`/api/workers`, verifyJWT, async (req, res) => {
+server.get(`/api/workers`, authenticateToken, async (req, res) => {
   try {
     const collection = db.collection("workers");
 
@@ -291,7 +286,7 @@ server.get(`/api/workers`, verifyJWT, async (req, res) => {
 });
 
 // GET route to fetch ranks
-server.get(`/api/ranks`, verifyJWT, async (req, res) => {
+server.get(`/api/ranks`, authenticateToken, async (req, res) => {
   try {
     const collection = db.collection("ranks");
     const ranks = await collection.find({}).toArray();
@@ -303,7 +298,7 @@ server.get(`/api/ranks`, verifyJWT, async (req, res) => {
 });
 
 // PUT route to update a worker
-server.put(`/api/worker/:id`, verifyJWT, async (req, res) => {
+server.put(`/api/worker/:id`, authenticateToken, async (req, res) => {
   const { id } = req.params;
   const { usuario, category, savedPayment, halfTime } = req.body;
 
@@ -343,7 +338,7 @@ server.put(`/api/worker/:id`, verifyJWT, async (req, res) => {
 });
 
 // GET route to fetch a worker's details by ID
-server.get(`/api/worker/:id`, verifyJWT, async (req, res) => {
+server.get(`/api/worker/:id`, authenticateToken, async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -380,7 +375,7 @@ const broadcastUpdate = (message) => {
 };
 
 // POST route to manage timing
-server.post(`/api/timing`, verifyJWT, async (req, res) => {
+server.post(`/api/timing`, authenticateToken, async (req, res) => {
   const { usuario, action, username } = req.body;
   if (!usuario || !action) {
     return res.status(400).json({ error: "Usuario and action are required" });
@@ -542,7 +537,7 @@ server.post(`/api/timing`, verifyJWT, async (req, res) => {
 });
 
 // GET route to fetch workers with their timing status
-server.get(`/api/workers/timing`, verifyJWT, async (req, res) => {
+server.get(`/api/workers/timing`, authenticateToken, async (req, res) => {
   try {
     const workersCollection = db.collection("workers");
     const timesCollection = db.collection("times");
@@ -575,7 +570,7 @@ server.get(`/api/workers/timing`, verifyJWT, async (req, res) => {
 });
 
 // GET route to validate workers' payment eligibility
-server.get(`/api/validate-payments`, verifyJWT, async (req, res) => {
+server.get(`/api/validate-payments`, authenticateToken, async (req, res) => {
   try {
     const workersCollection = db.collection("workers");
     const timesCollection = db.collection("times");
@@ -613,8 +608,8 @@ server.get(`/api/validate-payments`, verifyJWT, async (req, res) => {
         ])
         .toArray();
 
-      const requiredHours = rankMap[worker.category]?.hours;
-      const paymentAmount = rankMap[worker.category]?.payment;
+      const requiredHours = rankMap[worker.category].hours;
+      const paymentAmount = rankMap[worker.category].payment;
       const totalWorkerSeconds =
         totalTime.length > 0 ? totalTime[0].totalSeconds : 0;
 
@@ -642,7 +637,7 @@ server.get(`/api/validate-payments`, verifyJWT, async (req, res) => {
     for (const user of users) {
       const totalMinutes = user.totalMinutes || 0;
       const assistances = Math.floor(totalMinutes / 60);
-      const requiredAssistances = rankMap["JD"]?.assistances || 15;
+      const requiredAssistances = rankMap["JD"]?.assistances || 30;
       const paymentAmount = rankMap["JD"]?.payment || 20;
       const paid = user.paid;
       if (assistances >= requiredAssistances) {
@@ -693,7 +688,7 @@ serverInstance.on("upgrade", (request, socket, head) => {
 });
 
 // GET route to validate session
-server.get("/api/validate-session", verifyJWT, (req, res) => {
+server.get("/api/validate-session", authenticateToken, (req, res) => {
   if (req.user) {
     res.status(200).json({ message: "Session valid" });
   } else {
@@ -702,6 +697,12 @@ server.get("/api/validate-session", verifyJWT, (req, res) => {
 });
 
 // POST route to logout
-server.post("/api/logout", verifyJWT, (req, res) => {
-  res.status(200).json({ message: "Logout successful" });
+server.post("/api/logout", (req, res) => {
+  req.session.destroy((err) => {
+    if (err) {
+      return res.status(500).json({ error: "Error logging out" });
+    }
+    res.clearCookie("connect.sid");
+    res.status(200).json({ message: "Logout successful" });
+  });
 });
