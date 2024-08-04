@@ -170,6 +170,8 @@ server.post(`/api/login`, async (req, res) => {
   if (!name || !password) {
     return res.status(400).json({ error: "Name and password are required" });
   }
+  
+  console.log('login attempt user', name);
 
   try {
     const collection = db.collection(COLLECTION_NAME);
