@@ -618,14 +618,13 @@ server.get(`/api/validate-payments`, authenticateToken, async (req, res) => {
         assistances: rank.assistances,
       };
     });
-
     const workersToPay = [];
 
     // Validate workers
     for (const worker of workers) {
       const totalTime = await timesCollection
         .aggregate([
-          { $match: { usuario: worker.usuario, status: "confirmed" } },
+          { $match: { usuario: worker.usuario } },
           {
             $group: {
               _id: "$usuario",
@@ -655,6 +654,7 @@ server.get(`/api/validate-payments`, authenticateToken, async (req, res) => {
         (worker.halfTime && totalWorkerHours >= requiredHours / 2) ||
         totalWorkerHours >= requiredHours
       ) {
+        console.log(worker);
         workersToPay.push({
           ...worker,
           halfTime: worker.halfTime,
