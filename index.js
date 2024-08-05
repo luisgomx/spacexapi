@@ -536,6 +536,35 @@ server.post(`/api/timing`, authenticateToken, async (req, res) => {
   }
 });
 
+server.get(`/api/users/jd`, authenticateToken, async (req, res) => {
+  try {
+    const collection = db.collection(COLLECTION_NAME);
+
+    // Find users with category "JD"
+    const jdUsers = await collection.find({ category: "JD" }).toArray();
+
+    // Check if any users with category "JD" are found
+    if (jdUsers.length === 0) {
+      return res
+        .status(404)
+        .json({ message: "No users with category 'JD' found" });
+    }
+
+    // Return the users with category "JD" and their assistedTimes
+    res.status(200).json(
+      jdUsers.map((user) => ({
+        name: user.name,
+        assistedTimes: user.assistedTimes,
+        totalMinutes: user.totalMinutes,
+        paid: user.paid,
+      }))
+    );
+  } catch (e) {
+    console.error("Error in /api/users/jd route:", e);
+    res.status(500).json({ error: "Error connecting to the database" });
+  }
+});
+
 // GET route to fetch workers with their timing status
 server.get(`/api/workers/timing`, authenticateToken, async (req, res) => {
   try {
