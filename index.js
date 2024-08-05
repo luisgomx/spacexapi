@@ -70,14 +70,14 @@ client
     console.error("Error connecting to MongoDB:", error);
   });
 
-const ranks = [
-  { rank: "SEG", hours: 6, payment: 10 },
-  { rank: "TEC", hours: 8, payment: 20 },
-  { rank: "LOG", hours: 10, payment: 30 },
-  { rank: "HR", hours: 12, payment: 40 },
-  { rank: "DIR", hours: 14, payment: 50 },
-  { rank: "OP", hours: 16, payment: 60 },
-];
+// const ranks = [
+//   { rank: "SEG", hours: 6, payment: 10 },
+//   { rank: "TEC", hours: 8, payment: 20 },
+//   { rank: "LOG", hours: 10, payment: 30 },
+//   { rank: "HR", hours: 12, payment: 40 },
+//   { rank: "DIR", hours: 14, payment: 50 },
+//   { rank: "OP", hours: 16, payment: 60 },
+// ];
 
 // POST route to add a new user
 server.post(`/api/users`, async (req, res) => {
@@ -637,8 +637,14 @@ server.get(`/api/validate-payments`, authenticateToken, async (req, res) => {
         ])
         .toArray();
 
-      const requiredHours = rankMap[worker.category].hours;
-      const paymentAmount = rankMap[worker.category].payment;
+      const rankDetails = rankMap[worker.category];
+      if (!rankDetails) {
+        console.warn(`No rank details found for category: ${worker.category}`);
+        continue;
+      }
+
+      const requiredHours = rankDetails.hours;
+      const paymentAmount = rankDetails.payment;
       const totalWorkerSeconds =
         totalTime.length > 0 ? totalTime[0].totalSeconds : 0;
 
@@ -666,7 +672,7 @@ server.get(`/api/validate-payments`, authenticateToken, async (req, res) => {
     for (const user of users) {
       const totalMinutes = user.totalMinutes || 0;
       const assistances = Math.floor(totalMinutes / 60);
-      const requiredAssistances = rankMap["JD"]?.assistances || 30;
+      const requiredAssistances = rankMap["JD"]?.assistances || 15;
       const paymentAmount = rankMap["JD"]?.payment || 20;
       const paid = user.paid;
       if (assistances >= requiredAssistances) {
