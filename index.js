@@ -491,23 +491,22 @@ server.post(`/api/timing`, authenticateToken, async (req, res) => {
             confirmedBy: user,
           };
 
-          // If the same user starts and confirms, add totalMinutes to the user's assistedTimes
-          if (currentRecord.createdBy === user) {
-            const minutesToAdd =
-              update.totalMinutes - (currentRecord.totalMinutes || 0);
-            console.log("minutesToAdd:", minutesToAdd);
-            const updateResult = await db.collection(COLLECTION_NAME).updateOne(
-              { name: user },
-              {
-                $inc: {
-                  totalMinutes: minutesToAdd,
-                  assistedTimes: minutesToAdd,
-                },
+          // Add totalMinutes and assistedMinutes to the createdBy user
+          const createdByUser = currentRecord.createdBy;
+          const minutesToAdd =
+            update.totalMinutes - (currentRecord.totalMinutes || 0);
+          console.log("minutesToAdd:", minutesToAdd);
+          const updateResult = await db.collection(COLLECTION_NAME).updateOne(
+            { name: createdByUser },
+            {
+              $inc: {
+                totalMinutes: minutesToAdd,
+                assistedTimes: minutesToAdd,
               },
-              { upsert: true }
-            );
-            console.log("Update result:", updateResult);
-          }
+            },
+            { upsert: true }
+          );
+          console.log("Update result:", updateResult);
 
           await collection.updateOne(
             { _id: currentRecord._id },
