@@ -695,19 +695,39 @@ server.get(`/api/validate-payments`, authenticateToken, async (req, res) => {
 // Schedule cleanup of times collection every Sunday after payroll
 const cleanupTimesCollection = async () => {
   try {
+    const workersCollection = db.collection("workers");
     const timesCollection = db.collection("times");
 
-    // Delete all records where savedPayment is false
-    await timesCollection.deleteMany({});
+    // Retrieve all workers
+    const workers = await workersCollection.find({}).toArray();
+
+    // Filter out workers with savedPayment === false
+    const workersToRemoveTimes = workers.filter(
+      (worker) => !worker.savedPayment
+    );
+
+    // Get the list of usernames of the workers to remove times for
+    const usernamesToRemoveTimes = workersToRemoveTimes.map(
+      (worker) => worker.usuario
+    );
+
+    // Delete times documents for the workers with savedPayment === false
+    await timesCollection.deleteMany({
+      usuario: { $in: usernamesToRemoveTimes },
+    });
+
     console.log(
-      "Times collection cleared after payroll, except for records with savedPayment true."
+      "Times collection cleared for workers with savedPayment set to false."
     );
   } catch (e) {
     console.error("Error clearing times collection:", e);
   }
 };
 
-schedule.scheduleJob("0 2 * * 0", cleanupTimesCollection);
+// Schedule cleanup of times collection every Sunday at 5 PM
+schedule.scheduleJob("0 17 * * 0", cleanupTimesCollection);
+
+// Rest of the server code
 
 // Start the server
 const serverInstance = server.listen(PORT, () => {
