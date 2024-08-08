@@ -455,7 +455,23 @@ server.post(`/api/timing`, authenticateToken, async (req, res) => {
             status: "paused",
             pauseTime: new Date(),
             totalSeconds: currentRecord.totalSeconds + seconds,
+            pausedBy: user,
           };
+
+          const minutesToAdd = Math.floor(seconds / 60);
+          if (minutesToAdd > 0) {
+            await db.collection(COLLECTION_NAME).updateOne(
+              { name: user },
+              {
+                $inc: {
+                  totalMinutes: minutesToAdd,
+                  assistedTimes: minutesToAdd,
+                },
+              },
+              { upsert: true }
+            );
+          }
+
           await collection.updateOne(
             { _id: currentRecord._id },
             { $set: update }
@@ -490,23 +506,6 @@ server.post(`/api/timing`, authenticateToken, async (req, res) => {
             ),
             confirmedBy: user,
           };
-
-          // Add totalMinutes and assistedMinutes to the createdBy user
-          const createdByUser = currentRecord.createdBy;
-          const minutesToAdd =
-            update.totalMinutes - (currentRecord.totalMinutes || 0);
-          console.log("minutesToAdd:", minutesToAdd);
-          const updateResult = await db.collection(COLLECTION_NAME).updateOne(
-            { name: createdByUser },
-            {
-              $inc: {
-                totalMinutes: minutesToAdd,
-                assistedTimes: minutesToAdd,
-              },
-            },
-            { upsert: true }
-          );
-          console.log("Update result:", updateResult);
 
           await collection.updateOne(
             { _id: currentRecord._id },
