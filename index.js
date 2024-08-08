@@ -506,7 +506,20 @@ server.post(`/api/timing`, authenticateToken, async (req, res) => {
             ),
             confirmedBy: user,
           };
-
+          const minutesToAdd = Math.floor(seconds / 60);
+          if (minutesToAdd > 0) {
+            await db.collection(COLLECTION_NAME).updateOne(
+              { name: user },
+              {
+                $inc: {
+                  totalMinutes: minutesToAdd,
+                  assistedTimes: minutesToAdd,
+                },
+              },
+              { upsert: true }
+            );
+          }
+          console.log(update);
           await collection.updateOne(
             { _id: currentRecord._id },
             { $set: update }
