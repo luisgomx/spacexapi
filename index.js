@@ -737,9 +737,7 @@ const cleanupTimesCollection = async () => {
 };
 
 // Schedule cleanup of times collection every Sunday at 5 PM
-schedule.scheduleJob("0 17 * * 0", cleanupTimesCollection);
-
-// Rest of the server code
+schedule.scheduleJob("0 23 * * 0", cleanupTimesCollection);
 
 // Start the server
 const serverInstance = server.listen(PORT, () => {
