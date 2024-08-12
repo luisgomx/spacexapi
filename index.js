@@ -80,6 +80,62 @@ client
 // ];
 
 // POST route to add a new user
+
+// const resetAssitances = async () => {
+//   try {
+//     await client.connect();
+//     const users = db.collection("users");
+
+//     const result = await users.updateMany(
+//       {},
+//       {
+//         $set: {
+//           totalMinutes: 0,
+//           assistedTimes: 0,
+//         },
+//       }
+//     );
+
+//     console.log(`${result.modifiedCount} documents were updated.`);
+//   } finally {
+//     await client.close();
+//   }
+// };
+
+// resetAssitances();
+
+const validateWorkerDates = async (worker) => {
+  const today = new Date();
+  let updated = false;
+
+  if (
+    worker.savedPaymentEndDate &&
+    new Date(worker.savedPaymentEndDate) < today
+  ) {
+    worker.savedPayment = false;
+    updated = true;
+  }
+
+  if (worker.halfTimeEndDate && new Date(worker.halfTimeEndDate) < today) {
+    worker.halfTime = false;
+    updated = true;
+  }
+
+  if (updated) {
+    await db.collection("workers").updateOne(
+      { _id: worker._id },
+      {
+        $set: {
+          savedPayment: worker.savedPayment,
+          halfTime: worker.halfTime,
+        },
+      }
+    );
+  }
+
+  return worker;
+};
+
 server.post(`/api/users`, async (req, res) => {
   const { name, password } = req.body;
   const ip = req.clientIp;
@@ -123,6 +179,11 @@ server.post(`/api/users`, async (req, res) => {
     console.error("Error in /api/users route:", e);
     res.status(500).json({ error: "Error connecting to the database" });
   }
+});
+
+server.get("/api/server-time", (req, res) => {
+  const serverTime = new Date();
+  res.status(200).json({ serverTime });
 });
 
 server.put(`/api/user/:name/mark-paid`, async (req, res) => {
@@ -300,7 +361,14 @@ server.get(`/api/ranks`, authenticateToken, async (req, res) => {
 // PUT route to update a worker
 server.put(`/api/worker/:id`, authenticateToken, async (req, res) => {
   const { id } = req.params;
-  const { usuario, category, savedPayment, halfTime } = req.body;
+  const {
+    usuario,
+    category,
+    savedPayment,
+    halfTime,
+    savedPaymentEndDate,
+    halfTimeEndDate,
+  } = req.body;
 
   if (!usuario || !category) {
     return res.status(400).json({ error: "Usuario and category are required" });
@@ -317,6 +385,8 @@ server.put(`/api/worker/:id`, authenticateToken, async (req, res) => {
           category,
           savedPayment,
           halfTime,
+          savedPaymentEndDate,
+          halfTimeEndDate,
         },
       }
     );
@@ -343,11 +413,13 @@ server.get(`/api/worker/:id`, authenticateToken, async (req, res) => {
 
   try {
     const collection = db.collection("workers");
-    const worker = await collection.findOne({ _id: new ObjectId(id) });
+    let worker = await collection.findOne({ _id: new ObjectId(id) });
 
     if (!worker) {
       return res.status(404).json({ error: "Worker not found" });
     }
+
+    worker = await validateWorkerDates(worker);
 
     res.status(200).json(worker);
   } catch (e) {
