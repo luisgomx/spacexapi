@@ -533,11 +533,11 @@ server.post(`/api/timing`, authenticateToken, async (req, res) => {
           const minutesToAdd = Math.floor(seconds / 60);
           if (minutesToAdd > 0) {
             await db.collection(COLLECTION_NAME).updateOne(
-              { name: user },
+              { name: currentRecord.createdBy }, // Ensure assistedTimes are credited to the original starter
               {
                 $inc: {
                   totalMinutes: minutesToAdd,
-                  assistedTimes: minutesToAdd,
+                  assistedTimes: minutesToAdd, // Increment assistedTimes by the actual minutes added
                 },
               },
               { upsert: true }
@@ -581,11 +581,11 @@ server.post(`/api/timing`, authenticateToken, async (req, res) => {
           const minutesToAdd = Math.floor(seconds / 60);
           if (minutesToAdd > 0) {
             await db.collection(COLLECTION_NAME).updateOne(
-              { name: user },
+              { name: currentRecord.createdBy }, // Ensure assistedTimes are credited to the original starter
               {
                 $inc: {
                   totalMinutes: minutesToAdd,
-                  assistedTimes: minutesToAdd,
+                  assistedTimes: minutesToAdd, // Increment assistedTimes by the actual minutes added
                 },
               },
               { upsert: true }
