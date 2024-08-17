@@ -604,6 +604,52 @@ server.post(`/api/timing`, authenticateToken, async (req, res) => {
             .json({ error: "Timing has already been confirmed" });
         }
         break;
+      case "transfer":
+        if (
+          currentRecord.status === "active" ||
+          currentRecord.status === "paused"
+        ) {
+          // Calculate the time difference from start/pause to now
+          const { seconds } = calculateTotalTime(
+            currentRecord.startTime,
+            new Date()
+          );
+
+          const minutesToAdd = Math.floor(seconds / 60);
+          if (minutesToAdd > 0) {
+            // Credit the original user
+            await db.collection(COLLECTION_NAME).updateOne(
+              { name: currentRecord.createdBy },
+              {
+                $inc: {
+                  totalMinutes: minutesToAdd,
+                  assistedTimes: minutesToAdd,
+                },
+              },
+              { upsert: true }
+            );
+          }
+
+          update = {
+            createdBy: user, // Transfer ownership
+            startTime: new Date(), // Reset start time for the new owner
+          };
+
+          await collection.updateOne(
+            { _id: currentRecord._id },
+            { $set: update }
+          );
+          timing = { ...currentRecord, ...update };
+          broadcastUpdate({ action: "transfer", timing });
+        } else {
+          return res
+            .status(409)
+            .json({
+              error:
+                "Timing cannot be transferred unless it is active or paused",
+            });
+        }
+        break;
       default:
         return res.status(400).json({ error: "Invalid action" });
     }
