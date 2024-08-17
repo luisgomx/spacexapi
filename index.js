@@ -758,7 +758,7 @@ server.get(`/api/validate-payments`, authenticateToken, async (req, res) => {
       const requiredAssistances = rankMap["JD"]?.assistances || 15;
       const paymentAmount = rankMap["JD"]?.payment || 20;
       const paid = user.paid;
-      if (assistances >= requiredAssistances) {
+      if (assistances >= requiredAssistances && user.category === "JD") {
         usersToPay.push({
           name: user.name,
           assistances,
