@@ -80,29 +80,28 @@ client
 // ];
 
 // POST route to add a new user
+// const resetAssitances = async () => {
+//   try {
+//     await client.connect();
+//     const users = db.collection("users");
 
-const resetAssitances = async () => {
-   try {
-     await client.connect();
-     const users = db.collection("users");
+//     const result = await users.updateMany(
+//       {},
+//       {
+//         $set: {
+//           totalMinutes: 0,
+//           assistedTimes: 0,
+//         },
+//       }
+//     );
 
-     const result = await users.updateMany(
-       {},
-       {
-         $set: {
-           totalMinutes: 0,
-           assistedTimes: 0,
-         },
-       }
-     );
+//     console.log(`${result.modifiedCount} documents were updated.`);
+//   } finally {
+//     await client.close();
+//   }
+// };
 
-     console.log(`${result.modifiedCount} documents were updated.`);
-   } finally {
-     await client.close();
-   }
- };
-
- resetAssitances();
+// resetAssitances();
 
 const validateWorkerDates = async (worker) => {
   const today = new Date();
