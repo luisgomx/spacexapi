@@ -517,6 +517,7 @@ server.post(`/api/timing`, authenticateToken, async (req, res) => {
 
   try {
     const collection = db.collection("times");
+    const usersCollection = db.collection(COLLECTION_NAME);
 
     let currentRecord = await collection.findOne({
       usuario,
@@ -592,7 +593,7 @@ server.post(`/api/timing`, authenticateToken, async (req, res) => {
 
           const minutesToAdd = Math.floor(seconds / 60);
           if (minutesToAdd > 0) {
-            await db.collection(COLLECTION_NAME).updateOne(
+            await usersCollection.updateOne(
               { name: currentRecord.createdBy },
               {
                 $inc: {
@@ -635,9 +636,10 @@ server.post(`/api/timing`, authenticateToken, async (req, res) => {
             ),
             confirmedBy: user,
           };
+
           const minutesToAdd = Math.floor(seconds / 60);
           if (minutesToAdd > 0) {
-            await db.collection(COLLECTION_NAME).updateOne(
+            await usersCollection.updateOne(
               { name: currentRecord.createdBy },
               {
                 $inc: {
@@ -669,7 +671,7 @@ server.post(`/api/timing`, authenticateToken, async (req, res) => {
 
           const minutesToAdd = Math.floor(seconds / 60);
           if (minutesToAdd > 0) {
-            await db.collection(COLLECTION_NAME).updateOne(
+            await usersCollection.updateOne(
               { name: currentRecord.createdBy },
               {
                 $inc: {
