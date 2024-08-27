@@ -79,29 +79,90 @@ client
 //   { rank: "OP", hours: 16, payment: 60 },
 // ];
 
-// POST route to add a new user
-// const resetAssitances = async () => {
-//   try {
-//     await client.connect();
-//     const users = db.collection("users");
+const resetAssitances = async () => {
+  try {
+    await client.connect();
+    const users = db.collection("users");
 
-//     const result = await users.updateMany(
-//       {},
-//       {
-//         $set: {
-//           totalMinutes: 0,
-//           assistedTimes: 0,
-//         },
-//       }
-//     );
+    const result = await users.updateMany(
+      {},
+      {
+        $set: {
+          totalMinutes: 0,
+          assistedTimes: 0,
+        },
+      }
+    );
 
-//     console.log(`${result.modifiedCount} documents were updated.`);
-//   } finally {
-//     await client.close();
-//   }
-// };
+    console.log(`${result.modifiedCount} documents were updated.`);
+  } finally {
+    await client.close();
+  }
+};
 
 // resetAssitances();
+
+const resetAllPaidStatus = async () => {
+  try {
+    // Reset 'paid' property for all workers
+    await client.connect();
+    const workersCollection = db.collection("workers");
+    const usersCollection = db.collection(COLLECTION_NAME);
+
+    const workersResult = await workersCollection.updateMany(
+      {},
+      { $set: { paid: false } }
+    );
+
+    console.log(
+      `All workers' paid status reset to false. Modified count: ${workersResult.modifiedCount}`
+    );
+
+    // Reset 'paid' property for all users
+    const usersResult = await usersCollection.updateMany(
+      {},
+      { $set: { paid: false } }
+    );
+
+    console.log(
+      `All users' paid status reset to false. Modified count: ${usersResult.modifiedCount}`
+    );
+
+    return {
+      success: true,
+      message: "All workers' and users' paid status reset to false",
+      workersModifiedCount: workersResult.modifiedCount,
+      usersModifiedCount: usersResult.modifiedCount,
+    };
+  } catch (e) {
+    console.error("Error resetting paid status:", e);
+    return {
+      success: false,
+      message: "Error resetting paid status",
+      error: e,
+    };
+  }
+};
+
+const processPayroll = async () => {
+  try {
+    // Your payroll processing logic here...
+
+    // After payroll processing, reset all workers' paid status
+    const result = await resetAllPaidStatus();
+
+    if (result.success) {
+      console.log(result.message);
+    } else {
+      console.error(result.message, result.error);
+    }
+  } catch (error) {
+    console.error("Error during payroll processing:", error);
+  }
+};
+
+// Example of manually triggering the payroll process
+// processPayroll();
 
 const validateWorkerDates = async (worker) => {
   const today = new Date();
@@ -470,7 +531,7 @@ server.post(`/api/timing`, authenticateToken, async (req, res) => {
           startTime: new Date(),
           pauseTime: null,
           endTime: null,
-          totalSeconds: 0, // Store total elapsed time in seconds
+          totalSeconds: 0,
           createdBy: user,
           createdAt: new Date(),
         };
@@ -495,7 +556,7 @@ server.post(`/api/timing`, authenticateToken, async (req, res) => {
             status: "active",
             startTime: new Date(),
             pauseTime: null,
-            createdBy: user, // Update createdBy field
+            createdBy: user,
           };
         } else if (currentRecord.status === "confirmed") {
           update = {
@@ -504,7 +565,7 @@ server.post(`/api/timing`, authenticateToken, async (req, res) => {
             pauseTime: null,
             endTime: null,
             totalSeconds: currentRecord.totalSeconds,
-            createdBy: user, // Update createdBy field
+            createdBy: user,
           };
         } else {
           return res.status(409).json({ error: "Timing is already active" });
@@ -532,11 +593,11 @@ server.post(`/api/timing`, authenticateToken, async (req, res) => {
           const minutesToAdd = Math.floor(seconds / 60);
           if (minutesToAdd > 0) {
             await db.collection(COLLECTION_NAME).updateOne(
-              { name: currentRecord.createdBy }, // Ensure assistedTimes are credited to the original starter
+              { name: currentRecord.createdBy },
               {
                 $inc: {
                   totalMinutes: minutesToAdd,
-                  assistedTimes: minutesToAdd, // Increment assistedTimes by the actual minutes added
+                  assistedTimes: minutesToAdd,
                 },
               },
               { upsert: true }
@@ -556,10 +617,7 @@ server.post(`/api/timing`, authenticateToken, async (req, res) => {
         }
         break;
       case "confirm":
-        if (
-          currentRecord.status === "active" ||
-          currentRecord.status === "paused"
-        ) {
+        if (["active", "paused"].includes(currentRecord.status)) {
           const endTime = new Date();
           const { seconds } = calculateTotalTime(
             currentRecord.startTime,
@@ -580,17 +638,16 @@ server.post(`/api/timing`, authenticateToken, async (req, res) => {
           const minutesToAdd = Math.floor(seconds / 60);
           if (minutesToAdd > 0) {
             await db.collection(COLLECTION_NAME).updateOne(
-              { name: currentRecord.createdBy }, // Ensure assistedTimes are credited to the original starter
+              { name: currentRecord.createdBy },
               {
                 $inc: {
                   totalMinutes: minutesToAdd,
-                  assistedTimes: minutesToAdd, // Increment assistedTimes by the actual minutes added
+                  assistedTimes: minutesToAdd,
                 },
               },
               { upsert: true }
             );
           }
-          console.log(update);
           await collection.updateOne(
             { _id: currentRecord._id },
             { $set: update }
@@ -604,11 +661,7 @@ server.post(`/api/timing`, authenticateToken, async (req, res) => {
         }
         break;
       case "transfer":
-        if (
-          currentRecord.status === "active" ||
-          currentRecord.status === "paused"
-        ) {
-          // Calculate the time difference from start/pause to now
+        if (["active", "paused"].includes(currentRecord.status)) {
           const { seconds } = calculateTotalTime(
             currentRecord.startTime,
             new Date()
@@ -616,7 +669,6 @@ server.post(`/api/timing`, authenticateToken, async (req, res) => {
 
           const minutesToAdd = Math.floor(seconds / 60);
           if (minutesToAdd > 0) {
-            // Credit the original user
             await db.collection(COLLECTION_NAME).updateOne(
               { name: currentRecord.createdBy },
               {
@@ -630,8 +682,7 @@ server.post(`/api/timing`, authenticateToken, async (req, res) => {
           }
 
           update = {
-            createdBy: user, // Transfer ownership
-            // startTime: new Date(), // Reset start time for the new owner
+            createdBy: user,
           };
 
           await collection.updateOne(
@@ -849,6 +900,73 @@ const cleanupTimesCollection = async () => {
     console.error("Error clearing times collection:", e);
   }
 };
+
+const sumTotalMinutesFromTimes = async () => {
+  try {
+    await client.connect();
+
+    const timesCollection = db.collection("times");
+    const result = await timesCollection
+      .aggregate([
+        {
+          $group: {
+            _id: null,
+            totalMinutes: { $sum: "$totalMinutes" },
+          },
+        },
+      ])
+      .toArray();
+
+    const totalMinutes = result.length > 0 ? result[0].totalMinutes : 0;
+    console.log("Total Minutes from times collection:", totalMinutes);
+    return totalMinutes;
+  } catch (error) {
+    console.error("Error summing total minutes from times collection:", error);
+    return 0;
+  }
+};
+
+const sumTotalMinutesFromUsers = async () => {
+  try {
+    await client.connect();
+
+    const usersCollection = db.collection(COLLECTION_NAME);
+    const result = await usersCollection
+      .aggregate([
+        {
+          $group: {
+            _id: null,
+            totalMinutes: { $sum: "$totalMinutes" },
+          },
+        },
+      ])
+      .toArray();
+
+    const totalMinutes = result.length > 0 ? result[0].totalMinutes : 0;
+    console.log("Total Minutes from users collection:", totalMinutes);
+    return totalMinutes;
+  } catch (error) {
+    console.error("Error summing total minutes from users collection:", error);
+    return 0;
+  }
+};
+
+const getTotalMinutes = async () => {
+  try {
+    const totalMinutesFromTimes = await sumTotalMinutesFromTimes();
+    const totalMinutesFromUsers = await sumTotalMinutesFromUsers();
+
+    console.log(totalMinutesFromTimes);
+    console.log(totalMinutesFromUsers);
+
+    return totalMinutesFromTimes;
+  } catch (error) {
+    console.error("Error getting total minutes:", error);
+  }
+};
+
+// Call the function to get the grand total minutes
+getTotalMinutes();
 
 // Schedule cleanup of times collection every Sunday at 5 PM
 schedule.scheduleJob("0 23 * * 0", cleanupTimesCollection);
