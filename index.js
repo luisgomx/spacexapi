@@ -100,7 +100,7 @@ const resetAssitances = async () => {
   }
 };
 
-// resetAssitances();
+ resetAssitances();
 
 const resetAllPaidStatus = async () => {
   try {
@@ -162,7 +162,7 @@ const processPayroll = async () => {
 };
 
 // Example of manually triggering the payroll process
-// processPayroll();
+ processPayroll();
 
 const validateWorkerDates = async (worker) => {
   const today = new Date();
